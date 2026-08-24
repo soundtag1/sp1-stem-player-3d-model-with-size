@@ -77,9 +77,24 @@ def sd_stadium(x, y, x0, x1, cy, half_h):
     return sd_rrect(x, y, (x0 + x1) * 0.5, cy, (x1 - x0) * 0.5, half_h, half_h)
 
 
-def smooth_in(d, soft=0.03):
-    """1 inside the shape, 0 outside, with a narrow linear ramp on the edge."""
-    return np.clip(0.5 - d / soft, 0.0, 1.0)
+def disc_blend(x, y, cx, cy, r, edge=0.24):
+    """Weight 1 in the middle of a disc, easing to 0 at its rim.
+
+    A hard mask on a tensor grid turns a circular wall into a staircase, which
+    smooth vertex normals then render as a fringe of bristles.  Easing the
+    displacement over `edge` millimetres gives a shoulder instead.
+    """
+    rr = np.hypot(x - cx, y - cy)
+    w = np.clip((r - rr) / edge, 0.0, 1.0)
+    w = np.sin(w * (np.pi * 0.5))
+    inner = np.clip(rr / max(r - edge, 1e-3), 0.0, 1.0)
+    dome = np.sqrt(np.clip(1.0 - inner ** 2, 0.0, 1.0))
+    return rr, w, dome
+
+
+def sd_blend(sd, edge=0.16):
+    """Weight 1 well inside a signed-distance shape, easing to 0 at its edge."""
+    return np.sin(np.clip(-sd / edge, 0.0, 1.0) * (np.pi * 0.5))
 
 
 # ==========================================================================
@@ -116,24 +131,25 @@ def front_field(x, y):
 
     for cy in S.ROW_Y:
         # slider pocket -----------------------------------------------------
-        inside = sd_stadium(x, y, S.SL_X0, S.SL_X1, cy, S.SL_H * 0.5) < 0
-        d = np.where(inside, S.SL_DEPTH, d)
-        m = np.where(inside, M_CHROME, m)
+        sd = sd_stadium(x, y, S.SL_X0, S.SL_X1, cy, S.SL_H * 0.5)
+        w = sd_blend(sd)
+        d = d * (1.0 - w) + S.SL_DEPTH * w
+        m = np.where(sd < -0.05, M_CHROME, m)
 
         # dark track inside the pocket --------------------------------------
-        track = sd_stadium(x, y, S.SL_TRACK_X0, S.SL_TRACK_X1, cy,
-                           S.SL_TRACK_H * 0.5) < 0
-        d = np.where(track, S.SL_TRACK_DEPTH, d)
-        m = np.where(track, M_SLOT, m)
+        sd = sd_stadium(x, y, S.SL_TRACK_X0, S.SL_TRACK_X1, cy,
+                        S.SL_TRACK_H * 0.5)
+        w = sd_blend(sd, 0.12)
+        d = d * (1.0 - w) + S.SL_TRACK_DEPTH * w
+        m = np.where(sd < -0.04, M_SLOT, m)
 
-        # knob: cylinder with a spherical crown ------------------------------
+        # knob: a post with a rounded shoulder, blended into the slot it sits in
         r = S.KNOB_D * 0.5
-        rr = np.hypot(x - S.KNOB_X, y - cy)
-        knob = rr < r
-        dome = np.sqrt(np.clip(1.0 - (np.minimum(rr, r) / r) ** 2, 0.0, 1.0))
-        rise = (S.KNOB_RISE - S.KNOB_CROWN) + S.KNOB_CROWN * dome
-        d = np.where(knob, -rise, d)
-        m = np.where(knob, M_KNOB, m)
+        rr, w, dome = disc_blend(x, y, S.KNOB_X, cy, r)
+        top = -((S.KNOB_RISE - S.KNOB_CROWN) + S.KNOB_CROWN * dome)
+        inside = rr < r
+        d = np.where(inside, d * (1.0 - w) + top * w, d)
+        m = np.where(rr < r - 0.10, M_KNOB, m)
 
         # indicator LED ------------------------------------------------------
         led = sd_circle(x, y, S.LED_X, cy, S.LED_D * 0.5) < 0
@@ -143,14 +159,16 @@ def front_field(x, y):
         # button: shallow pocket with a key cap standing in it ---------------
         bcx = (S.BT_X0 + S.BT_X1) * 0.5
         bhx = (S.BT_X1 - S.BT_X0) * 0.5
-        pocket = sd_rrect(x, y, bcx, cy, bhx + S.BT_GAP, S.BT_H * 0.5 + S.BT_GAP,
-                          S.BT_R + S.BT_GAP) < 0
-        d = np.where(pocket, S.BT_POCKET_DEPTH, d)
-        m = np.where(pocket, M_POCKET, m)
+        sd = sd_rrect(x, y, bcx, cy, bhx + S.BT_GAP, S.BT_H * 0.5 + S.BT_GAP,
+                      S.BT_R + S.BT_GAP)
+        w = sd_blend(sd, 0.10)
+        d = d * (1.0 - w) + S.BT_POCKET_DEPTH * w
+        m = np.where(sd < -0.03, M_POCKET, m)
 
-        key = sd_rrect(x, y, bcx, cy, bhx, S.BT_H * 0.5, S.BT_R) < 0
-        d = np.where(key, -S.BT_KEY_RISE, d)
-        m = np.where(key, M_KEY, m)
+        sd = sd_rrect(x, y, bcx, cy, bhx, S.BT_H * 0.5, S.BT_R)
+        w = sd_blend(sd, 0.10)
+        d = d * (1.0 - w) + (-S.BT_KEY_RISE) * w
+        m = np.where(sd < -0.03, M_KEY, m)
 
     # two blind holes on the cap -------------------------------------------
     for dx in S.CAP_DOT_X:
@@ -242,8 +260,10 @@ def rim_field(x, y, z, nx, ny, flat):
     # ---- +X end: two 3.5 mm jacks and USB-C -------------------------------
     sel = on_ports & live
     for jy in S.JACK_Y:
-        put(sel & (sd_circle(y, z, jy, 0.0, S.JACK_D * 0.5) < 0),
-            S.JACK_DEPTH, M_SLOT)
+        rr, w, _ = disc_blend(y, z, jy, 0.0, S.JACK_D * 0.5, edge=0.18)
+        bore = sel & (rr < S.JACK_D * 0.5)
+        d = np.where(bore, d * (1.0 - w) + S.JACK_DEPTH * w, d)
+        m = np.where(bore & (rr < S.JACK_D * 0.5 - 0.08), M_SLOT, m)
     put(sel & (sd_rrect(y, z, S.USBC_Y, 0.0, S.USBC_LEN * 0.5,
                         S.USBC_WID * 0.5, S.USBC_R) < 0),
         S.USBC_DEPTH, M_SLOT)
@@ -255,10 +275,14 @@ def rim_field(x, y, z, nx, ny, flat):
             put(sel & (sd_circle(y, z, gy, gz, S.GRILLE_D * 0.5) < 0),
                 S.GRILLE_DEPTH, M_SLOT)
     for ky in S.ROUNDKEY_Y:
-        put(sel & (sd_circle(y, z, ky, 0.0, S.ROUNDKEY_POCKET_D * 0.5) < 0),
-            S.ROUNDKEY_POCKET_DEPTH, M_POCKET)
-        put(sel & (sd_circle(y, z, ky, 0.0, S.ROUNDKEY_D * 0.5) < 0),
-            -S.ROUNDKEY_RISE, M_KEY)
+        rr, w, _ = disc_blend(y, z, ky, 0.0, S.ROUNDKEY_POCKET_D * 0.5, edge=0.16)
+        ring = sel & (rr < S.ROUNDKEY_POCKET_D * 0.5)
+        d = np.where(ring, d * (1.0 - w) + S.ROUNDKEY_POCKET_DEPTH * w, d)
+        m = np.where(ring, M_POCKET, m)
+        rr2, w2, _ = disc_blend(y, z, ky, 0.0, S.ROUNDKEY_D * 0.5, edge=0.16)
+        cap = sel & (rr2 < S.ROUNDKEY_D * 0.5)
+        d = np.where(cap, d * (1.0 - w2) + (-S.ROUNDKEY_RISE) * w2, d)
+        m = np.where(cap & (rr2 < S.ROUNDKEY_D * 0.5 - 0.08), M_KEY, m)
 
     # ---- parting groove runs right round the shell ------------------------
     groove = live & (np.abs(y - S.SEAM_Y) < S.SEAM_W * 0.5) & ~on_top
