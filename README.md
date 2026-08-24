@@ -1,0 +1,1 @@
+# sp1-stem-player-3d-model-with-size
