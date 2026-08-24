@@ -45,6 +45,15 @@ def main(do_render=True):
     for k, v in maps.items():
         v.save(os.path.join(TEXDIR, f'sp1_{k}.png'), optimize=True)
 
+    # A second set taken straight off the photographs - lighting and all -
+    # for people who want the as-shot look rather than a de-lit albedo.
+    photodir = os.path.join(TEXDIR, 'photo')
+    os.makedirs(photodir, exist_ok=True)
+    print('      + photo-straight variant')
+    pmaps = TX.build_atlas(verbose=False, photo_raw=True)
+    for k, v in pmaps.items():
+        v.save(os.path.join(photodir, f'sp1_{k}.png'), optimize=True)
+
     print('[2/4] mesh')
     m = build_mesh.build()
     P, N, UV, F = m['P'], m['N'], m['UV'], m['F']
@@ -65,6 +74,16 @@ def main(do_render=True):
         embed[k] = buf.getvalue()
     n = EX.write_glb(os.path.join(DIST, 'sp1_stem_player.glb'), P, N, UV, F, embed)
     print(f'      dist/sp1_stem_player.glb   {n/1e6:.2f} MB  (metres, 2K PBR textures)')
+
+    pembed = {}
+    for k, v in pmaps.items():
+        buf = io.BytesIO()
+        v.resize((v.width // 2, v.height // 2), Image.LANCZOS).save(
+            buf, format='PNG', optimize=True)
+        pembed[k] = buf.getvalue()
+    n = EX.write_glb(os.path.join(DIST, 'sp1_stem_player_photo.glb'), P, N, UV, F,
+                     pembed, material_name='SP1 photographic')
+    print(f'      dist/sp1_stem_player_photo.glb  {n/1e6:.2f} MB  (photo textures)')
 
     EX.write_obj(os.path.join(DIST, 'sp1_stem_player.obj'), P, N, UV, F)
     print(f'      dist/sp1_stem_player.obj   '

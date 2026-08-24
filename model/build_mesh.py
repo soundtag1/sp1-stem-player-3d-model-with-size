@@ -27,12 +27,13 @@ def _uv(rect, u, v):
 # --------------------------------------------------------------------------
 
 def front_axes():
+    m = S.mx
     xs = G.axis(S.X0 + S.R_EDGE, S.X1 - S.R_EDGE, 1.9, bands=[
-        (S.SL_X0 - 0.4, S.SL_X1 + 0.4, 0.18),
-        (S.KNOB_X - 1.5, S.KNOB_X + 1.5, 0.11),
-        (S.LED_X - 0.7, S.LED_X + 0.7, 0.09),
-        (S.BT_X0 - 0.5, S.BT_X1 + 0.5, 0.18),
-        (min(S.CAP_DOT_X) - 0.8, max(S.CAP_DOT_X) + 0.8, 0.10),
+        (m(S.SL_X0 - 0.4), m(S.SL_X1 + 0.4), 0.18),
+        (m(S.KNOB_X - 1.5), m(S.KNOB_X + 1.5), 0.11),
+        (m(S.LED_X - 0.7), m(S.LED_X + 0.7), 0.09),
+        (m(S.BT_X0 - 0.5), m(S.BT_X1 + 0.5), 0.18),
+        (m(min(S.CAP_DOT_X) - 0.8), m(max(S.CAP_DOT_X) + 0.8), 0.10),
         (S.X0 + S.R_EDGE, S.X0 + S.R_EDGE + 3.2, 0.22),
         (S.X1 - S.R_EDGE - 3.2, S.X1 - S.R_EDGE, 0.22),
     ])
@@ -51,6 +52,7 @@ def front_axes():
 def back_axes():
     xb, yb = [], []
     for (sx, sy) in S.SCREW_POS:
+        sx = S.mx(sx)
         xb.append((sx - 1.9, sx + 1.9, 0.13))
         yb.append((sy - 1.9, sy + 1.9, 0.13))
     xb += [(S.X0 + S.R_EDGE, S.X0 + S.R_EDGE + 3.2, 0.22),
@@ -69,22 +71,29 @@ def rim_s_samples(outline):
     ax, by = outline.ax, outline.by
 
     def s_top(x):      # +Y edge, x decreasing with s
-        return c[4] + (ax - x)
+        return c[4] + (ax - S.mx(x))
 
-    def s_ports(y):    # +X edge, y increasing with s
-        return c[2] + (y + by)
+    # under the mirror the connector end sits at -X and the speaker at +X
+    def s_ports(y):
+        return (c[6] + (by - y)) if S.MIRROR_X else (c[2] + (y + by))
 
-    def s_speaker(y):  # -X edge, y decreasing with s
-        return c[6] + (by - y)
+    def s_speaker(y):
+        return (c[2] + (y + by)) if S.MIRROR_X else (c[6] + (by - y))
 
     bands = []
     for kx in S.TOPKEY_X:
         half = S.TOPKEY_LEN * 0.5 + S.TOPKEY_POCKET_MARGIN + 0.4
         bands.append((s_top(kx + half), s_top(kx - half), 0.22))
-    for hx, hw in ((S.MIC_X, S.MIC_D), (S.AUX_HOLE_X, S.AUX_HOLE_D)):
-        bands.append((s_top(hx + hw), s_top(hx - hw), 0.08))
+    bands.append((s_top(S.MIC_X + S.MIC_D), s_top(S.MIC_X - S.MIC_D), 0.08))
     for lx in S.STATUS_LED_X:
         bands.append((s_top(lx + 0.6), s_top(lx - 0.6), 0.07))
+    def s_bot(x):      # -Y edge, x increasing with s
+        return c[0] + (S.mx(x) + ax)
+
+    half = S.BOTKEY_LEN * 0.5 + S.BOTKEY_POCKET_MARGIN + 0.4
+    bands.append((s_bot(S.BOTKEY_X - half), s_bot(S.BOTKEY_X + half), 0.22))
+    bands.append((s_bot(S.BOT_PINHOLE_X - S.BOT_PINHOLE_D),
+                  s_bot(S.BOT_PINHOLE_X + S.BOT_PINHOLE_D), 0.08))
     for jy in S.JACK_Y:
         bands.append((s_ports(jy + S.JACK_D * 0.6), s_ports(jy - S.JACK_D * 0.6), 0.11))
     bands.append((s_ports(S.USBC_Y + S.USBC_LEN * 0.6),

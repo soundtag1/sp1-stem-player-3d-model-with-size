@@ -36,6 +36,8 @@ def axis(lo, hi, coarse, bands=()):
     pts = list(np.arange(lo, hi + 1e-9, coarse))
     pts += [lo, hi]
     for a, b, step in bands:
+        if a > b:
+            a, b = b, a
         a = max(a, lo)
         b = min(b, hi)
         if b <= a:
@@ -102,6 +104,8 @@ def front_field(x, y):
     `depth` is measured into the body from the Z = +T/2 plane, so a negative
     value means the feature stands proud of the panel.
     """
+    if S.MIRROR_X:
+        x = -x
     d = np.zeros_like(x)
     m = np.full(x.shape, M_ALU, dtype=np.int32)
 
@@ -158,6 +162,8 @@ def front_field(x, y):
 
 
 def back_field(x, y):
+    if S.MIRROR_X:
+        x = -x
     d = np.zeros_like(x)
     m = np.full(x.shape, M_ALU, dtype=np.int32)
 
@@ -186,10 +192,14 @@ def rim_field(x, y, z, nx, ny, flat):
     `flat` is 1 on the straight part of the thickness profile and 0 on the
     two edge fillets, so features never bleed around the rounded edges.
     """
+    if S.MIRROR_X:
+        x = -x
+        nx = -nx
     d = np.zeros_like(x)
     m = np.full(x.shape, M_ALU, dtype=np.int32)
 
     on_top = (ny > 0.7) & (y > S.SEAM_Y)          # +Y long edge
+    on_bot = ny < -0.7                             # -Y long edge
     on_ports = nx > 0.7                            # +X short end (connectors)
     on_speaker = nx < -0.7                         # -X short end (speaker)
     live = flat > 0.5
@@ -212,11 +222,22 @@ def rim_field(x, y, z, nx, ny, flat):
 
     put(sel & (sd_circle(x, z, S.MIC_X, 0.0, S.MIC_D * 0.5) < 0),
         S.MIC_DEPTH, M_SLOT)
-    put(sel & (sd_circle(x, z, S.AUX_HOLE_X, 0.0, S.AUX_HOLE_D * 0.5) < 0),
-        S.AUX_HOLE_DEPTH, M_SLOT)
     for lx in S.STATUS_LED_X:
         put(sel & (sd_circle(x, z, lx, 0.0, S.STATUS_LED_D * 0.5) < 0),
             S.STATUS_LED_DEPTH, M_SLOT)
+
+    # ---- -Y edge: one key and a pinhole -----------------------------------
+    sel = on_bot & live
+    pm = S.BOTKEY_POCKET_MARGIN
+    pocket = sd_rrect(x, z, S.BOTKEY_X, 0.0, S.BOTKEY_LEN * 0.5 + pm,
+                      S.BOTKEY_WID * 0.5 + pm, S.BOTKEY_R + pm) < 0
+    put(sel & pocket, S.BOTKEY_POCKET_DEPTH, M_POCKET)
+    key = sd_rrect(x, z, S.BOTKEY_X, 0.0, S.BOTKEY_LEN * 0.5,
+                   S.BOTKEY_WID * 0.5, S.BOTKEY_R) < 0
+    put(sel & key, -S.BOTKEY_RISE, M_KEY)
+    put(sel & (sd_circle(x, z, S.BOT_PINHOLE_X, 0.0,
+                         S.BOT_PINHOLE_D * 0.5) < 0),
+        S.BOT_PINHOLE_DEPTH, M_SLOT)
 
     # ---- +X end: two 3.5 mm jacks and USB-C -------------------------------
     sel = on_ports & live
@@ -320,7 +341,7 @@ class Outline:
 # thickness profile of the rim
 # ==========================================================================
 
-def rim_profile(step_flat=0.30, step_fillet=0.12):
+def rim_profile(step_flat=0.18, step_fillet=0.12):
     """Polyline through the (n, z) cross-section of the side wall.
 
     Returns arrays (n, z, pn, pz, flat, arclen) where (pn, pz) is the outward

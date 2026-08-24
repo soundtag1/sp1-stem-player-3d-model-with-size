@@ -94,7 +94,7 @@ def evaluate_fields():
     x0 = ox + onx * nn; y0 = oy + ony * nn
     d, m = G.rim_field(x0, y0, zz, onx, ony, fl)
     out['rim'] = dict(slice=sl, mat=m, depth=d, A=x0, Bc=y0, Z=zz,
-                      nx=onx, ny=ony)
+                      nx=onx, ny=ony, flat=fl)
     return out
 
 
@@ -105,7 +105,7 @@ def evaluate_fields():
 MATERIALS = {
     G.M_ALU:    (S.COL_ALU,        0.42, 0.88),
     G.M_POCKET: (S.COL_ALU_DARK,   0.52, 0.85),
-    G.M_SLOT:   (S.COL_SLOT,       0.72, 0.05),
+    G.M_SLOT:   (S.COL_SLOT,       0.88, 0.00),
     G.M_KEY:    (S.COL_PLASTIC,    0.34, 0.02),
     G.M_KNOB:   (S.COL_PLASTIC,    0.30, 0.02),
     G.M_CHROME: (S.COL_CHROME,     0.24, 0.95),
@@ -176,14 +176,17 @@ def _bilinear(a, x, y):
             a[y1, x0] * (1 - fx) * fy + a[y1, x1] * fx * fy)
 
 
-def _delight(rgb, big=260, small=3):
+def _delight(rgb, big=260, small=3, raw=False):
     """Divide out the illumination gradient, leaving a flat albedo."""
     im = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
     lowf = np.asarray(im.filter(ImageFilter.GaussianBlur(big)),
                       dtype=np.float32) / 255.0
-    flat = rgb / np.maximum(lowf, 0.02)
-    med = np.median(flat.reshape(-1, 3), axis=0)
-    flat = flat / np.maximum(med, 1e-3)
+    if raw:
+        flat = rgb.copy()
+    else:
+        flat = rgb / np.maximum(lowf, 0.02)
+        med = np.median(flat.reshape(-1, 3), axis=0)
+        flat = flat / np.maximum(med, 1e-3)
     # high frequency component - real scratches, blast texture, dust
     sm = np.asarray(Image.fromarray(
         (np.clip(flat / flat.max(), 0, 1) * 255).astype(np.uint8)).filter(
@@ -192,7 +195,98 @@ def _delight(rgb, big=260, small=3):
     return flat, hf.mean(axis=2)
 
 
-def photo_layer(cfg, rect, mirror_x=False, seam_anchor=False):
+def prep_reference(path, raw=False):
+    """Load a rectified reference and return (albedo, highfreq, mask).
+
+    Bedding, fingers and shadow are masked out and filled from neighbouring
+    device pixels, so nothing foreign ever prints into a texture.
+    """
+    src = np.asarray(Image.open(path).convert('RGB'), dtype=np.float32) / 255.0
+    flat, hf = _delight(src, raw=raw)
+
+    v = src.max(axis=2)
+    sat = (v - src.min(axis=2)) / np.maximum(v, 1e-6)
+    r, g, b = src[..., 0], src[..., 1], src[..., 2]
+    skin = ((r > g + 0.035) & (g >= b - 0.01) & (r - b > 0.075) & (sat < 0.42))
+    dev = ((v > 0.40) & (sat < 0.22) & ~skin).astype(np.float32)
+    dev_img = Image.fromarray((dev * 255).astype(np.uint8))
+    dev_img = dev_img.filter(ImageFilter.MinFilter(7)).filter(
+        ImageFilter.GaussianBlur(3))
+    devm = np.asarray(dev_img, dtype=np.float32) / 255.0
+
+    def _b(a, rad):
+        return np.asarray(Image.fromarray(
+            (np.clip(a, 0, 4) / 4 * 255).astype(np.uint8)).filter(
+            ImageFilter.GaussianBlur(rad)), dtype=np.float32) / 255.0 * 4
+
+    if raw:
+        sel = devm > 0.5
+        if sel.any():
+            med = np.median(flat[sel].reshape(-1, 3), axis=0)
+            flat = flat / np.maximum(med.max(), 1e-3) * 0.86
+    wm = devm[..., None]
+    fill = np.stack([_b(flat[..., c] * devm, 70) for c in range(3)], axis=-1)
+    fill = fill / np.maximum(_b(devm, 70)[..., None], 1e-3)
+    flat = flat * wm + fill * (1 - wm)
+    soft = np.clip(_b(devm, 24) * 3.0, 0.0, 1.0)
+    return flat, hf, soft
+
+
+# Which rectified edge view covers which side face, and which device end sits
+# at the left-hand side of that image.
+EDGE_REFS = {
+    'top':     dict(file='rect_edge_top.png', axis='x', left='-X'),
+    'bottom':  dict(file='rect_edge_bottom.png', axis='x', left='-X'),
+    'ports':   dict(file='rect_edge_ports.png', axis='y', left='-Y'),
+    'speaker': dict(file='rect_edge_speaker.png', axis='y', left='+Y'),
+}
+
+
+def rim_photo_layer(f, raw=False):
+    """Sample the four rectified edge views into the rim atlas band."""
+    x, y, z = f['A'], f['Bc'], f['Z']
+    nx, ny = f['nx'], f['ny']
+    alb = np.zeros(x.shape + (3,), dtype=np.float32)
+    high = np.zeros(x.shape, dtype=np.float32)
+    cover = np.zeros(x.shape, dtype=np.float32)
+
+    ports_pos = -1.0 if S.MIRROR_X else 1.0     # sign of X at the connector end
+    faces = {
+        'top': ny > 0.7,
+        'bottom': ny < -0.7,
+        'ports': nx * ports_pos > 0.7,
+        'speaker': nx * ports_pos < -0.7,
+    }
+    for name, sel in faces.items():
+        cfg = EDGE_REFS[name]
+        path = os.path.join(REPO, 'reference', cfg['file'])
+        if not os.path.exists(path) or not sel.any():
+            continue
+        flat, hf, devm = prep_reference(path, raw=raw)
+        H, W = flat.shape[:2]
+        img_w_mm, img_h_mm = W / REF_PPM, H / REF_PPM
+
+        if cfg['axis'] == 'x':
+            t = (S.X1 - x) / S.L if S.MIRROR_X else (x - S.X0) / S.L
+        else:
+            t = (y - S.Y0) / S.W if cfg['left'] == '-Y' else (S.Y1 - y) / S.W
+        # the rectified edge is the face plus a sliver of front or back, so the
+        # true face sits centred inside it
+        band_lo = (img_h_mm - S.T) * 0.5
+        d_mm = band_lo + (S.Z1 - z)
+
+        px = np.clip(t, 0, 1) * img_w_mm * REF_PPM
+        py = np.clip(d_mm, 0, img_h_mm) * REF_PPM
+        a = _bilinear(flat, px, py)
+        hgh = _bilinear(hf[..., None], px, py)[..., 0]
+        cv = _bilinear(devm[..., None], px, py)[..., 0]
+        alb[sel] = a[sel]
+        high[sel] = hgh[sel]
+        cover[sel] = cv[sel]
+    return alb, high, cover
+
+
+def photo_layer(cfg, rect, mirror_x=False, seam_anchor=False, raw=False):
     """Resample a rectified photograph into an atlas rectangle.
 
     Returns (albedo, highfreq, coverage) at the atlas region resolution.
@@ -203,22 +297,45 @@ def photo_layer(cfg, rect, mirror_x=False, seam_anchor=False):
         return None, None, None
 
     src = np.asarray(Image.open(path).convert('RGB'), dtype=np.float32) / 255.0
-    flat, hf = _delight(src)
+    flat, hf = _delight(src, raw=raw)
 
     # Where in the reference is the device itself?  Anything else is bedding,
     # fingers or shadow and must not leak into the albedo.
     v = src.max(axis=2)
     sat = (v - src.min(axis=2)) / np.maximum(v, 1e-6)
-    dev = ((v > 0.42) & (sat < 0.17)).astype(np.float32)
+    r, g, b = src[..., 0], src[..., 1], src[..., 2]
+    skin = ((r > g + 0.035) & (g >= b - 0.01) & (r - b > 0.075)
+            & (sat < 0.42))                                      # fingers, thumbs
+    fabric = sat > 0.17                                          # bedding
+    dev = ((v > 0.42) & ~fabric & ~skin).astype(np.float32)
     dev_img = Image.fromarray((dev * 255).astype(np.uint8))
     dev_img = dev_img.filter(ImageFilter.MinFilter(9))       # erode the border
     dev_img = dev_img.filter(ImageFilter.GaussianBlur(4))
     devm = np.asarray(dev_img, dtype=np.float32) / 255.0
 
+    # Fill whatever was rejected by pulling in nearby device pixels, so a
+    # thumb or a fold of bedding never prints into the texture.
+    def _blur(a, rad):
+        return np.asarray(Image.fromarray(
+            (np.clip(a, 0, 4) / 4 * 255).astype(np.uint8)).filter(
+            ImageFilter.GaussianBlur(rad)), dtype=np.float32) / 255.0 * 4
+    if raw:
+        sel = devm > 0.5
+        if sel.any():
+            med = np.median(flat[sel].reshape(-1, 3), axis=0)
+            flat = flat / np.maximum(med.max(), 1e-3) * 0.86
+    wm = devm[..., None]
+    fill = np.stack([_blur(flat[..., c] * devm, 90) for c in range(3)], axis=-1)
+    norm = _blur(devm, 90)[..., None]
+    fill = fill / np.maximum(norm, 1e-3)
+    flat = flat * wm + fill * (1 - wm)
+
     U, V = np.meshgrid((np.arange(w) + 0.5) / w, (np.arange(h) + 0.5) / h)
     # device coordinates for every texel of this atlas region
     dx = (S.X1 - U * S.L) if mirror_x else (S.X0 + U * S.L)
     dy = S.Y1 - V * S.W
+    if S.MIRROR_X:
+        dx = -dx            # the model is the mirror of the photographs
 
     u_mm = (dx - S.X0) / S.L * cfg['x_span']
     if seam_anchor:
@@ -230,7 +347,8 @@ def photo_layer(cfg, rect, mirror_x=False, seam_anchor=False):
     py = v_mm * REF_PPM
     H, W = src.shape[:2]
     cover = ((px >= 0) & (px < W - 1) & (py >= 0) & (py < H - 1)).astype(np.float32)
-    cover *= _bilinear(devm[..., None], px, py)[..., 0]
+    soft = np.clip(_blur(devm, 30) * 3.0, 0.0, 1.0)   # trust the filled holes too
+    cover *= _bilinear(soft[..., None], px, py)[..., 0]
     albedo = _bilinear(flat, px, py)
     high = _bilinear(hf[..., None], px, py)[..., 0]
     return albedo, high, cover
@@ -243,9 +361,12 @@ def draw_cap_triangle(draw, rect, colour):
     def to_px(mx, my):
         return (x + (mx - S.X0) / S.L * w, y + (S.Y1 - my) / S.W * h)
 
-    cx, cy = S.TRI_CX, S.TRI_CY
+    cx, cy = S.mx(S.TRI_CX), S.TRI_CY
     hw, hh = S.TRI_W * 0.5, S.TRI_H * 0.5
-    pts = [to_px(cx - hw, cy), to_px(cx + hw, cy + hh), to_px(cx + hw, cy - hh)]
+    tip = -1 if S.MIRROR_X else 1          # the triangle points outboard
+    pts = [to_px(cx + tip * hw, cy),
+           to_px(cx - tip * hw, cy + hh),
+           to_px(cx - tip * hw, cy - hh)]
     draw.polygon(pts, fill=colour)
 
 
@@ -253,7 +374,7 @@ def draw_cap_triangle(draw, rect, colour):
 # main
 # --------------------------------------------------------------------------
 
-def build_atlas(verbose=True):
+def build_atlas(verbose=True, photo_raw=False):
     W, H = B.ATLAS_W, B.ATLAS_H
     base = np.zeros((H, W, 3), dtype=np.float32)
     rough = np.full((H, W), 0.5, dtype=np.float32)
@@ -282,13 +403,21 @@ def build_atlas(verbose=True):
     # keep the procedural black because the photo bakes in their shadowing.
     PHOTO_W = {G.M_ALU: 0.92, G.M_SEAM: 0.80, G.M_POCKET: 0.70,
                G.M_KEY: 0.75, G.M_KNOB: 0.70, G.M_CHROME: 0.62, G.M_SLOT: 0.30}
+    if photo_raw:
+        # "straight off the photograph": take the rectified image as-is,
+        # lighting and all, at full strength for every material.
+        PHOTO_W = {k: 1.0 for k in PHOTO_W}
     if verbose:
         print('  photographic albedo (rectified references)')
     for name, cfg, rect, mirror, anchor in (
             ('front', REF_FRONT, B.FRONT_RECT, False, False),
-            ('back', REF_BACK, B.BACK_RECT, True, True)):
-        alb, high, cover = photo_layer(cfg, rect, mirror_x=mirror,
-                                       seam_anchor=anchor)
+            ('back', REF_BACK, B.BACK_RECT, True, True),
+            ('rim', None, B.RIM_RECT, False, False)):
+        if name == 'rim':
+            alb, high, cover = rim_photo_layer(fields['rim'], raw=photo_raw)
+        else:
+            alb, high, cover = photo_layer(cfg, rect, mirror_x=mirror,
+                                           seam_anchor=anchor, raw=photo_raw)
         if alb is None:
             continue
         f = fields[name]
@@ -299,8 +428,11 @@ def build_atlas(verbose=True):
         wgt *= cover
         tint = base[sl]
         # keep the procedural hue, take the photograph's value and detail
-        mixed = np.clip(alb, 0.0, 1.6) * tint / np.maximum(
-            np.median(alb.reshape(-1, 3), axis=0)[None, None, :], 1e-3)
+        if photo_raw:
+            mixed = np.clip(alb, 0.0, 1.0)
+        else:
+            mixed = np.clip(alb, 0.0, 1.6) * tint / np.maximum(
+                np.median(alb.reshape(-1, 3), axis=0)[None, None, :], 1e-3)
         base[sl] = tint * (1.0 - wgt[..., None]) + mixed * wgt[..., None]
         # real scratches and blast texture into the bump + roughness
         alu_here = (m == G.M_ALU) | (m == G.M_SEAM)
@@ -320,6 +452,11 @@ def build_atlas(verbose=True):
     fine = value_noise((H, W), 1.6, seed=23)
     micro = (grain - 0.5) * 0.016 + (fine - 0.5) * 0.012
     alu = (metal > 0.5)
+    if photo_raw:
+        alu = alu.copy()
+        for rect in (B.FRONT_RECT, B.BACK_RECT, B.RIM_RECT):
+            x, y, w, h = rect
+            alu[y:y + h, x:x + w] = False
     base[alu] *= (1.0 + micro[alu] * 1.6)[..., None]
     rough += micro * 0.9
     height += (fine - 0.5) * 0.0022 + (grain - 0.5) * 0.0018
@@ -354,7 +491,7 @@ def build_atlas(verbose=True):
     if verbose:
         print('  back plate etching')
     bx, by, bw, bh = B.BACK_RECT
-    etch = back_etch_mask((bh, bw))
+    etch = np.zeros((bh, bw), np.float32) if photo_raw else back_etch_mask((bh, bw))
     if etch.max() > 0:
         reg = base[by:by + bh, bx:bx + bw]
         col = np.array(S.COL_ETCH, dtype=np.float32) / 255.0

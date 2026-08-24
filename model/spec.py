@@ -25,6 +25,18 @@ T = 9.4           # thickness  (Z)
 R_CORNER = 2.6    # corner radius of the XY outline
 R_EDGE = 0.9      # fillet where the front/back faces roll into the sides
 
+# The physical unit is the mirror image of how the reference photographs
+# were laid out - confirmed against the device in hand.  Rather than negating
+# every X constant below (and inverting every range), the mirror is applied
+# once, where the fields are evaluated and where the photographs are sampled.
+MIRROR_X = True
+
+
+def mx(v):
+    """Mirror a single X coordinate."""
+    return -v if MIRROR_X else v
+
+
 X0, X1 = -L / 2, L / 2
 Y0, Y1 = -W / 2, W / 2
 Z0, Z1 = -T / 2, T / 2
@@ -55,8 +67,8 @@ SL_TRACK_DEPTH = 0.95
 
 KNOB_X = -4.95               # knobs are parked at the left end of travel
 KNOB_D = 2.45                # knob diameter
-KNOB_RISE = 0.34             # how far the knob crown stands above the panel
-KNOB_CROWN = 0.18            # dome height of the crown
+KNOB_RISE = 1.55             # how far the knob crown stands above the panel
+KNOB_CROWN = 0.40            # dome height of the crown
 
 # ---- indicator LEDs ------------------------------------------------------
 LED_X = 12.70
@@ -82,34 +94,46 @@ CAP_DOT_DEPTH = 0.34
 # --------------------------------------------------------------------------
 # +Y long edge - two keys, mic port and status LEDs
 # --------------------------------------------------------------------------
-TOPKEY_X = (-20.09, 20.09)   # centres
-TOPKEY_LEN = 10.90           # along X
+TOPKEY_X = (-20.40, 20.95)   # centres
+TOPKEY_LEN = 11.20           # along X
 TOPKEY_WID = 5.60            # along Z
 TOPKEY_R = 0.55
 TOPKEY_POCKET_MARGIN = 0.70  # pocket is this much larger all round
 TOPKEY_POCKET_DEPTH = 0.50
 TOPKEY_RISE = 1.72           # crown above the +Y face
 
-MIC_X = -5.20                # microphone pinhole
-MIC_D = 0.90
+MIC_X = 6.50                 # microphone pinhole
+MIC_D = 0.85
 MIC_DEPTH = 1.20
-AUX_HOLE_X = -2.10           # second, smaller pinhole
-AUX_HOLE_D = 0.55
-AUX_HOLE_DEPTH = 0.90
 
-STATUS_LED_X = (0.20, 2.00, 3.80, 5.60)
-STATUS_LED_D = 0.70
-STATUS_LED_DEPTH = 0.30
+STATUS_LED_X = (-3.80, -1.43, 0.94, 3.31)   # 2.37 mm pitch
+STATUS_LED_D = 0.55
+STATUS_LED_DEPTH = 0.28
+
+# --------------------------------------------------------------------------
+# -Y long edge - one key and a pinhole
+# --------------------------------------------------------------------------
+BOTKEY_X = -20.80
+BOTKEY_LEN = 10.30
+BOTKEY_WID = 5.20
+BOTKEY_R = 0.55
+BOTKEY_POCKET_MARGIN = 0.55
+BOTKEY_POCKET_DEPTH = 0.45
+BOTKEY_RISE = 1.45
+
+BOT_PINHOLE_X = -7.00
+BOT_PINHOLE_D = 0.85
+BOT_PINHOLE_DEPTH = 1.10
 
 # --------------------------------------------------------------------------
 # +X short end - connectors (2x 3.5 mm jack, USB-C)
 # --------------------------------------------------------------------------
-JACK_Y = (13.40, 0.00)       # two 3.5 mm TRS jacks
-JACK_D = 4.20
+JACK_Y = (8.80, -0.80)       # two 3.5 mm TRS jacks
+JACK_D = 3.90
 JACK_DEPTH = 2.60
 
-USBC_Y = -13.40
-USBC_LEN = 8.90              # along Y
+USBC_Y = -14.00
+USBC_LEN = 9.10              # along Y
 USBC_WID = 3.20              # along Z
 USBC_R = 1.55
 USBC_DEPTH = 2.40
@@ -117,14 +141,14 @@ USBC_DEPTH = 2.40
 # --------------------------------------------------------------------------
 # -X short end - speaker grille and two round keys
 # --------------------------------------------------------------------------
-GRILLE_ROW_Y = (10.12, 8.00, 5.89, 3.77, 1.66)
+GRILLE_ROW_Y = (8.80, 6.80, 4.80, 2.80, 0.80)   # 2.00 mm pitch
 GRILLE_COL_Z = (-0.725, 0.725)
 GRILLE_D = 0.85
 GRILLE_DEPTH = 1.40
 
-ROUNDKEY_Y = (-7.53, -16.91)
-ROUNDKEY_D = 4.90
-ROUNDKEY_POCKET_D = 5.24
+ROUNDKEY_Y = (-8.80, -15.90)
+ROUNDKEY_D = 5.05
+ROUNDKEY_POCKET_D = 5.35
 ROUNDKEY_POCKET_DEPTH = 0.38
 ROUNDKEY_RISE = 0.06
 
@@ -142,7 +166,7 @@ SCREW_HEAD_D = 2.55
 COL_ALU = (232, 230, 224)        # bead-blasted anodised aluminium
 COL_ALU_DARK = (206, 203, 196)   # pocket floors / shaded recesses
 COL_PLASTIC = (238, 236, 230)    # key and knob caps
-COL_SLOT = (26, 27, 26)          # dark slot interiors
+COL_SLOT = (17, 18, 18)          # dark slot interiors
 COL_CHROME = (196, 196, 192)     # the steel channel inside a slider pocket
 COL_RED = (214, 52, 62)          # index triangle
 COL_ETCH = (58, 58, 56)          # laser etched marks on the back
