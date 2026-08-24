@@ -476,16 +476,8 @@ def build_atlas(verbose=True, photo_raw=False):
         rr[pocket] += (rings[pocket] - 0.5) * 0.03
         rough[sl] = rr
 
-    # ---- knurl on the slider knobs ---------------------------------------
-    f = fields['front']
-    sl = f['slice']
-    knob = f['mat'] == G.M_KNOB
-    if knob.any():
-        A, Bc = f['A'], f['Bc']
-        ribs = np.sin(np.arctan2(Bc, A - S.KNOB_X) * 26.0) * 0.5 + 0.5
-        h = height[sl]
-        h[knob] += (ribs[knob] - 0.5) * 0.005
-        height[sl] = h
+    # The knob caps are smooth in the rectified front view - an earlier knurl
+    # here read as bristles on a 1.55 mm post, so it is deliberately absent.
 
     # ---- laser etching on the back ---------------------------------------
     if verbose:

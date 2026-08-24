@@ -142,7 +142,7 @@ USBC_DEPTH = 2.40
 # -X short end - speaker grille and two round keys
 # --------------------------------------------------------------------------
 GRILLE_ROW_Y = (8.80, 6.80, 4.80, 2.80, 0.80)   # 2.00 mm pitch
-GRILLE_COL_Z = (-0.725, 0.725)
+GRILLE_COL_Z = (-0.90, 0.90)
 GRILLE_D = 0.85
 GRILLE_DEPTH = 1.40
 

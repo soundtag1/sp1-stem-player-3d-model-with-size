@@ -30,7 +30,7 @@ def front_axes():
     m = S.mx
     xs = G.axis(S.X0 + S.R_EDGE, S.X1 - S.R_EDGE, 1.9, bands=[
         (m(S.SL_X0 - 0.4), m(S.SL_X1 + 0.4), 0.18),
-        (m(S.KNOB_X - 1.5), m(S.KNOB_X + 1.5), 0.11),
+        (m(S.KNOB_X - 1.6), m(S.KNOB_X + 1.6), 0.06),
         (m(S.LED_X - 0.7), m(S.LED_X + 0.7), 0.09),
         (m(S.BT_X0 - 0.5), m(S.BT_X1 + 0.5), 0.18),
         (m(min(S.CAP_DOT_X) - 0.8), m(max(S.CAP_DOT_X) + 0.8), 0.10),
