@@ -1,0 +1,10 @@
+newmtl sp1_aluminium
+Ka 0.00 0.00 0.00
+Kd 0.91 0.90 0.88
+Ks 0.60 0.60 0.58
+Ns 90
+d 1.0
+illum 2
+map_Kd ../textures/sp1_base.png
+map_Bump -bm 1.0 ../textures/sp1_normal.png
+map_Ns ../textures/sp1_mr.png
